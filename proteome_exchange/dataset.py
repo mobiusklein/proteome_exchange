@@ -1,14 +1,28 @@
 import os
+import logging
 
 try:
-    from urllib import urlopen
+    from urllib2 import urlopen
+    from urllib2 import URLError
 except ImportError:
     from urllib.request import urlopen
+    from urllib.error import URLError
 
 from collections import namedtuple
 from lxml import etree
 
+try:
+    from Queue import Queue, Empty
+except ImportError:
+    from queue import Queue, Empty
+
+import threading
+
 from .utils import Base, Bundle
+
+
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 
 DatasetIdentifier = namedtuple("DatasetIdentifier", ['repository', 'id'])
@@ -40,14 +54,53 @@ class Dataset(Base):
     def __len__(self):
         return len(self.dataset_files)
 
-    def download(self, destination=None, filter=None):
+    def download(self, destination=None, filter=None, threads=None):
+        if threads is None:
+            threads = 0
         if destination is None:
             destination = '.'
-        for data_file in self:
-            if filter is not None and filter(data_file):
-                continue
-            data_file.download(
-                os.path.join(destination, data_file.name))
+        if threads == 1:
+            for data_file in self:
+                if filter is not None and filter(data_file):
+                    continue
+                logger.info(
+                    "Downloading %s to %s",
+                    data_file.name,
+                    os.path.join(destination, data_file.name))
+                data_file.download(
+                    os.path.join(destination, data_file.name))
+        else:
+            inqueue = Queue()
+            for data_file in self:
+                if filter is not None and filter(data_file):
+                    continue
+                inqueue.put((data_file, os.path.join(destination, data_file.name)))
+
+            def _work():
+                while 1:
+                    try:
+                        data_file, destination = inqueue.get(False, 3.0)
+                        logger.info("Downloading %s to %s", data_file.name, destination)
+                        try:
+                            data_file.download(destination)
+                        except URLError as err:
+                            logger.error("An error occurred, retrying", exc_info=True)
+                            import time
+                            time.sleep(2)
+                            data_file.download(destination)
+                    except Empty:
+                        break
+
+            if threads <= 0:
+                threads = len(self)
+            workers = []
+            for i in range(threads):
+                worker = threading.Thread(target=_work)
+                worker.start()
+                workers.append(worker)
+
+            for worker in workers:
+                worker.join()
 
     @staticmethod
     def parse_identifier_list(node):
