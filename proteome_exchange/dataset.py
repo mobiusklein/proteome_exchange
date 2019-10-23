@@ -102,7 +102,7 @@ class Dataset(Base):
         url = "http://proteomecentral.proteomexchange.org/cgi/GetDataset?ID={accession}&outputMode=XML&test=no"
         url = url.format(accession=accession)
         fd = urlopen(url)
-        return cls.from_xml(etree.parse(fd))
+        return cls.from_xml(etree.parse(fd).getroot())
 
 
 get = Dataset.get
