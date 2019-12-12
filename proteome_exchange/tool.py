@@ -12,12 +12,20 @@ from proteome_exchange import get
 
 def regex_to_filter(pattern):
     pattern = re.compile(pattern)
-    return lambda x: pattern.search(x) is not None
+    return lambda x: pattern.search(str(x)) is not None
 
 
 @click.group()
 def cli():
     pass
+
+@cli.command(short_help="List the data files in a data repository through Proteome Exchange")
+@click.argument("identifier")
+def describe(identifier):
+    dataset = get(identifier)
+    click.echo("ID: " + dataset.id)
+    for df in dataset.dataset_files:
+        click.echo("%s - %s" % (df.name, df.file_type))
 
 @cli.command(short_help="Download a data repository through Proteome Exchange")
 @click.argument("identifier")
