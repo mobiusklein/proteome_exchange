@@ -1,20 +1,15 @@
 import os
 import logging
 
-try:
-    from urllib2 import urlopen
-    from urllib2 import URLError
-except ImportError:
-    from urllib.request import urlopen
-    from urllib.error import URLError
+from urllib.request import urlopen
+from urllib.error import URLError
+
+from queue import Queue, Empty
 
 from collections import namedtuple
+
 from lxml import etree
 
-try:
-    from Queue import Queue, Empty
-except ImportError:
-    from queue import Queue, Empty
 
 import threading
 
@@ -61,7 +56,7 @@ class Dataset(Base):
             destination = '.'
         if threads == 1:
             for data_file in self:
-                if filter is not None and filter(data_file):
+                if filter is not None and not filter(data_file):
                     continue
                 logger.info(
                     "Downloading %s to %s",
@@ -69,10 +64,12 @@ class Dataset(Base):
                     os.path.join(destination, data_file.name))
                 data_file.download(
                     os.path.join(destination, data_file.name))
+                logger.info("Finished downloading %s",
+                            data_file.name, )
         else:
             inqueue = Queue()
             for data_file in self:
-                if filter is not None and filter(data_file):
+                if filter is not None and not filter(data_file):
                     continue
                 inqueue.put((data_file, os.path.join(destination, data_file.name)))
 
@@ -83,11 +80,13 @@ class Dataset(Base):
                         logger.info("Downloading %s to %s", data_file.name, destination)
                         try:
                             data_file.download(destination)
-                        except URLError as err:
+                        except URLError:
                             logger.error("An error occurred, retrying", exc_info=True)
                             import time
                             time.sleep(2)
                             data_file.download(destination)
+                        logger.info("Finished downloading %s",
+                                    data_file.name, )
                     except Empty:
                         break
 
@@ -199,7 +198,7 @@ class DatasetFile(Base):
             node.find(".//cvParam").attrib['value']
         )
 
-    def download(self, destination=None):
+    def download(self, destination=None, progress_handler=None):
         if destination is None:
             destination = self.name
         if not hasattr(destination, 'write'):
@@ -207,9 +206,17 @@ class DatasetFile(Base):
         else:
             fh = destination
         source = urlopen(self.uri)
+        headers = dict(source.headers)
+        total_size = headers.get("Content-Length")
+        if total_size is not None:
+            total_size = int(total_size)
         with fh:
             chunk_size = 2 ** 16
             chunk = source.read(chunk_size)
+            progress = 0
             while chunk:
+                progress += len(chunk)
                 fh.write(chunk)
+                if progress_handler:
+                    progress_handler(len(chunk), progress, total_size, self)
                 chunk = source.read(chunk_size)
